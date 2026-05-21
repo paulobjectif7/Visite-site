@@ -24435,9 +24435,18 @@ function importJSON(){
 }
 
 function resetState(){
-  if(!confirm('Effacer ce relevé et recommencer à zéro ?'))return;
-  S=fresh();localStorage.removeItem(SK);
-  render();updateMeta();toast('Nouveau relevé démarré');
+  if(!confirm('Effacer ce relevé et recommencer à zéro ?\n\nL\'application reviendra à l\'écran d\'accueil pour démarrer un nouveau relevé.'))return;
+  S=fresh();
+  localStorage.removeItem(SK);
+  // Revenir à l'écran d'accueil
+  SETUP_DONE=false;
+  // Détacher la sauvegarde fichier (l'ancien .json ne correspond plus au nouveau relevé)
+  FS_HANDLE=null;FS_LAST_SAVE=null;FS_LAST_ERROR=null;
+  if(FS_TIMER){clearInterval(FS_TIMER);FS_TIMER=null;}
+  if(FS_PILL_TIMER){clearInterval(FS_PILL_TIMER);FS_PILL_TIMER=null;}
+  fsUpdatePill();
+  render();updateMeta();
+  toast('Nouveau relevé — configuration de la sauvegarde');
 }
 
 function exportCSV(){
@@ -26068,8 +26077,7 @@ function setupSkipFile(){
 
 // =====================================================
 // PWA — manifest et service worker injectés dynamiquement
-// Permet l'installation "comme une app" sur Android Chrome
-// quand le site est servi via HTTPS (ex: GitHub Pages).
+// Le service worker est dans un fichier séparé sw.js à la racine.
 // Inactif sans nuire si on ouvre le fichier en file://
 // =====================================================
 (function installPWA(){
@@ -26082,6 +26090,7 @@ function setupSkipFile(){
       short_name:'Visite',
       description:'Application de relevé terrain pour audit énergétique',
       start_url:'./',
+      scope:'./',
       display:'standalone',
       orientation:'any',
       background_color:'#F6F7F9',
@@ -26095,35 +26104,19 @@ function setupSkipFile(){
     document.head.appendChild(link);
   }catch(e){console.warn('PWA manifest:',e);}
 
-  // Service worker — uniquement si on est servi via http(s), pas en file://
+  // Service worker : nécessaire pour fonctionnement hors-ligne (mode avion en visite).
+  // Doit être un fichier .js séparé à la racine — les blob URLs ne fonctionnent pas pour les SW.
+  // Le fichier sw.js doit être uploadé sur GitHub à côté de index.html.
   if('serviceWorker' in navigator && (location.protocol==='https:'||location.protocol==='http:')){
-    const SW_CODE=`
-      const CACHE='objectif7-v1';
-      self.addEventListener('install',e=>{self.skipWaiting();});
-      self.addEventListener('activate',e=>{e.waitUntil(self.clients.claim());});
-      self.addEventListener('fetch',e=>{
-        // Stratégie : cache-first pour la page elle-même et ses ressources
-        if(e.request.method!=='GET')return;
-        e.respondWith(
-          caches.open(CACHE).then(cache=>
-            cache.match(e.request).then(cached=>{
-              const fetched=fetch(e.request).then(resp=>{
-                if(resp && resp.status===200 && resp.type==='basic'){
-                  cache.put(e.request,resp.clone());
-                }
-                return resp;
-              }).catch(()=>cached);
-              return cached || fetched;
-            })
-          )
-        );
-      });
-    `;
-    try{
-      const swBlob=new Blob([SW_CODE],{type:'application/javascript'});
-      const swUrl=URL.createObjectURL(swBlob);
-      navigator.serviceWorker.register(swUrl).catch(e=>console.warn('SW register:',e));
-    }catch(e){console.warn('SW setup:',e);}
+    window.addEventListener('load',()=>{
+      navigator.serviceWorker.register('./sw.js',{scope:'./'})
+        .then(reg=>{
+          console.log('SW enregistré, scope:',reg.scope);
+          // Vérifier les mises à jour à chaque ouverture
+          reg.update().catch(()=>{});
+        })
+        .catch(e=>console.warn('SW register failed:',e));
+    });
   }
 })();
 
